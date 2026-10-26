@@ -2,12 +2,17 @@ import { ConsoleLogger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as appInsights from 'applicationinsights';
 
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 async function bootstrap() {
+  if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+    appInsights.setup().start();
+  }
+
   const app = await NestFactory.create(AppModule, {
     logger: new ConsoleLogger({
       colors: true,

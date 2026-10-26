@@ -19,7 +19,7 @@ import { TransactionsModule } from './transactions/transactions.module';
         type: 'postgres' as const,
         url: config.getOrThrow<string>('database.url'),
         autoLoadEntities: true,
-        synchronize: config.get<string>('nodeEnv') !== 'production',
+        synchronize: config.getOrThrow<boolean>('database.synchronize'),
       }),
     }),
     TransactionsModule,

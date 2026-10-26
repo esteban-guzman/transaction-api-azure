@@ -8,6 +8,7 @@ export const validationSchema = Joi.object({
   DATABASE_URL: Joi.string()
     .uri({ scheme: ['postgres', 'postgresql'] })
     .required(),
+  DB_SYNCHRONIZE: Joi.boolean(),
   PROVIDER_BASE_URL: Joi.string().uri().required(),
   PROVIDER_TIMEOUT_MS: Joi.number().integer().positive().default(3000),
 });

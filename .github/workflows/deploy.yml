@@ -1,0 +1,47 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint -- --no-fix
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Build image in ACR
+        run: |
+          az acr build --registry "$ACR_NAME" --image "txapi:${{ github.sha }}" .
+      - name: Update container apps
+        run: |
+          IMAGE="$ACR_NAME.azurecr.io/txapi:${{ github.sha }}"
+          az containerapp update -g "$RESOURCE_GROUP" -n ca-txapi-mock --image "$IMAGE"
+          az containerapp update -g "$RESOURCE_GROUP" -n ca-txapi-api --image "$IMAGE"
