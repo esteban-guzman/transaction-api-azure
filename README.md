@@ -6,7 +6,7 @@ REST API para ejecutar transacciones financieras `CREDIT` y `DEBIT` contra un pr
 
 ## Tech Stack
 
-NestJS + TypeScript · PostgreSQL + TypeORM · class-validator · Axios · Swagger / OpenAPI · Jest · Docker Compose
+NestJS + TypeScript · PostgreSQL + TypeORM · class-validator · Axios · Swagger / OpenAPI · Jest · Docker Compose · Azure (Container Apps, PostgreSQL Flexible Server, Key Vault, Application Insights)
 
 Arquitectura hexagonal (ports / adapters).
 
@@ -53,7 +53,7 @@ docker compose up --build
 | PostgreSQL    | localhost:5432                                                                         |
 
 
-Schema: TypeORM `synchronize` cuando `NODE_ENV !== production`. No hay migraciones en este repo para mantener el entorno local simple y reproducible. En un despliegue productivo lo reemplazaría por migraciones versionadas.
+Schema: TypeORM `synchronize` cuando `NODE_ENV !== production`, o cuando `DB_SYNCHRONIZE=true` (así se despliega en Azure; ver más abajo). No hay migraciones en este repo para mantener el entorno local simple y reproducible. En un despliegue productivo lo reemplazaría por migraciones versionadas.
 
 ---
 
@@ -72,6 +72,56 @@ Hace falta Postgres y un mock provider corriendo. Las variables requeridas son `
 npm run start:mock        # :3001
 npm run start:dev         # :3000
 ```
+
+---
+
+
+
+# Despliegue en Azure
+
+La API corre en Azure en el resource group `rg-txapi` (región `centralus`). Toda la infraestructura está definida en [`infra/main.bicep`](infra/main.bicep).
+
+## Servicios de Azure en uso
+
+| Servicio                                  | Para qué se usa                                                                              |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Azure Container Apps**                  | Ejecuta la API (ingress público, 1–3 réplicas) y el mock-provider (ingress interno).         |
+| **Azure Database for PostgreSQL Flexible**| Base de datos (Burstable B1ms, PostgreSQL 16, SSL obligatorio). Reemplaza al contenedor local. |
+| **Azure Container Registry (Basic)**      | Guarda la imagen Docker; Container Apps la descarga con Managed Identity (`AcrPull`).        |
+| **Azure Key Vault**                       | Guarda `DATABASE_URL` como secreto; la API lo lee con Managed Identity (sin credenciales en el código). |
+| **Application Insights + Log Analytics**  | Telemetría (requests, dependencias, excepciones) y logs de los contenedores.                 |
+| **Managed Identity (user-assigned)**      | Acceso a ACR y Key Vault sin contraseñas.                                                    |
+
+No se usan Service Bus, API Management, Entra ID ni Redis.
+
+## Variables de entorno y Azure
+
+Ninguna variable de Azure es obligatoria en local: `.env.example` solo contiene la configuración base y la app funciona igual sin ellas.
+En Azure, Bicep inyecta estas variables en el contenedor de la API:
+
+| Variable                                | Origen en Azure                              | ¿Está en `.env.example`? |
+| --------------------------------------- | -------------------------------------------- | ------------------------ |
+| `DATABASE_URL`                          | Secreto en **Key Vault** (`database-url`)    | Sí, apuntando a Postgres local |
+| `PROVIDER_BASE_URL`                     | FQDN interno del Container App del mock      | Sí, apuntando a `localhost:3001` |
+| `NODE_ENV`, `PORT`, `PROVIDER_TIMEOUT_MS` | Valores fijos en el Bicep                  | Sí |
+| `DB_SYNCHRONIZE`                        | `true` en Bicep (crea las tablas al arrancar) | Comentada, opcional |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Generada por **Application Insights**        | Comentada, opcional. Si falta, la telemetría no se inicia |
+
+## Desplegar
+
+```bash
+az group create -n rg-txapi -l centralus
+az deployment group create -g rg-txapi -f infra/main.bicep -p dbAdminPassword=$(openssl rand -hex 16)
+# construir y subir la imagen a ACR, luego repetir el deployment con image=<acr>.azurecr.io/txapi:<tag>
+```
+
+El workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) ejecuta tests, construye la imagen y actualiza ambos Container Apps. Requiere las variables `AZURE_RESOURCE_GROUP` y `AZURE_ACR_NAME` y los secretos `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` y `AZURE_SUBSCRIPTION_ID` (OIDC).
+
+**Notas**
+
+- PostgreSQL permite el acceso desde servicios de Azure (regla `0.0.0.0`). Para producción real convendría una VNet / private endpoint.
+- La extensión `uuid-ossp` está habilitada en el servidor porque TypeORM genera los UUID con `uuid_generate_v4()`.
+- `DB_SYNCHRONIZE=true` es aceptable para este challenge, no para producción (ver Limitaciones).
 
 ---
 
@@ -269,7 +319,7 @@ El criterio de diseño y los recortes del alcance no los delegué: revisé el c�
 
 - Un `FAILED` con la misma `Idempotency-Key` no reintenta al proveedor.
 - El breaker no se comparte entre réplicas.
-- `synchronize` no reemplaza migraciones.
+- `synchronize` no reemplaza migraciones (también activo en Azure vía `DB_SYNCHRONIZE`).
 - El cursor se trata como valor opaco; se valida su estructura básica, no se expone como contrato para ser generado por clientes.
 - El mock no demuestra `REJECTED` por HTTP; eso está en unitarios.
 
