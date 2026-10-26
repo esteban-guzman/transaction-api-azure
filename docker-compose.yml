@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: transactions
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d transactions']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mock-provider:
+    build: .
+    command: npm run start:mock
+    environment:
+      MOCK_PROVIDER_PORT: 3001
+    ports:
+      - '3001:3001'
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-provider:
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/transactions
+      PROVIDER_BASE_URL: http://mock-provider:3001
+      PROVIDER_TIMEOUT_MS: 3000
+    ports:
+      - '3000:3000'
+
+volumes:
+  pgdata:
